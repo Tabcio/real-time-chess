@@ -203,7 +203,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, collection, getDoc, updateDoc, onSnapshot, addDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, collection, getDoc, updateDoc, onSnapshot, addDoc, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Global variables provided by the Canvas environment
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -225,6 +225,7 @@
         let tileSize; // Will be calculated based on canvas size
 
         let currentUnits = []; // Array to hold the latest unit data for rendering
+        let selectedUnitId = null; // Stores the ID of the currently selected unit
 
         // Function to show custom modal messages
         function showCustomModal(message) {
@@ -257,6 +258,7 @@
                     unsubscribeFromUnits(); // Stop listening to units when leaving game screen
                     unsubscribeFromUnits = null;
                 }
+                selectedUnitId = null; // Clear selection when leaving game screen
             } else if (viewId === 'game') {
                 lobbyContainer.classList.add('hidden');
                 lobbyContainer.style.display = 'none';
@@ -294,7 +296,7 @@
             // Clear the entire canvas
             ctx.clearRect(0, 0, gameCanvas.width, gameCanvas.height);
 
-            // Draw the chess board background (optional, but good for context)
+            // Draw the chess board background
             for (let i = 0; i < boardSize; i++) {
                 for (let j = 0; j < boardSize; j++) {
                     ctx.fillStyle = (i + j) % 2 === 0 ? '#b0c4de' : '#778899'; // Light steel blue and light slate gray
@@ -308,6 +310,15 @@
                 const y = unit.position.y * tileSize + tileSize / 2; // Center of the tile
 
                 ctx.save(); // Save the current drawing state
+
+                // Highlight selected unit
+                if (selectedUnitId === unit.id) {
+                    ctx.strokeStyle = '#FFFF00'; // Yellow highlight
+                    ctx.lineWidth = 5;
+                    ctx.beginPath();
+                    ctx.rect(unit.position.x * tileSize, unit.position.y * tileSize, tileSize, tileSize);
+                    ctx.stroke();
+                }
 
                 // Determine color based on ownerColor
                 ctx.fillStyle = unit.color === 'white' ? '#f8f8f8' : '#333333'; // Off-white for white, dark grey for black
@@ -344,6 +355,84 @@
         }
 
 
+        // Define initial chess pieces with their properties
+        const initialChessPieces = [
+            // White Pieces (Player 1)
+            { type: 'Rook', ownerColor: 'white', initialPos: { x: 0, y: 0 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Knight', ownerColor: 'white', initialPos: { x: 1, y: 0 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Bishop', ownerColor: 'white', initialPos: { x: 2, y: 0 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Queen', ownerColor: 'white', initialPos: { x: 3, y: 0 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'King', ownerColor: 'white', initialPos: { x: 4, y: 0 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Bishop', ownerColor: 'white', initialPos: { x: 5, y: 0 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Knight', ownerColor: 'white', initialPos: { x: 6, y: 0 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Rook', ownerColor: 'white', initialPos: { x: 7, y: 0 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            // Pawns for white
+            { type: 'Pawn', ownerColor: 'white', initialPos: { x: 0, y: 1 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Pawn', ownerColor: 'white', initialPos: { x: 1, y: 1 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Pawn', ownerColor: 'white', initialPos: { x: 2, y: 1 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Pawn', ownerColor: 'white', initialPos: { x: 3, y: 1 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Pawn', ownerColor: 'white', initialPos: { x: 4, y: 1 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Pawn', ownerColor: 'white', initialPos: { x: 5, y: 1 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Pawn', ownerColor: 'white', initialPos: { x: 6, y: 1 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Pawn', ownerColor: 'white', initialPos: { x: 7, y: 1 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+
+            // Black Pieces (Player 2)
+            { type: 'Rook', ownerColor: 'black', initialPos: { x: 0, y: 7 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Knight', ownerColor: 'black', initialPos: { x: 1, y: 7 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Bishop', ownerColor: 'black', initialPos: { x: 2, y: 7 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Queen', ownerColor: 'black', initialPos: { x: 3, y: 7 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'King', ownerColor: 'black', initialPos: { x: 4, y: 7 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Bishop', ownerColor: 'black', initialPos: { x: 5, y: 7 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Knight', ownerColor: 'black', initialPos: { x: 6, y: 7 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Rook', ownerColor: 'black', initialPos: { x: 7, y: 7 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            // Pawns for black
+            { type: 'Pawn', ownerColor: 'black', initialPos: { x: 0, y: 6 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Pawn', ownerColor: 'black', initialPos: { x: 1, y: 6 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Pawn', ownerColor: 'black', initialPos: { x: 2, y: 6 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Pawn', ownerColor: 'black', initialPos: { x: 3, y: 6 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Pawn', ownerColor: 'black', initialPos: { x: 4, y: 6 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Pawn', ownerColor: 'black', initialPos: { x: 5, y: 6 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Pawn', ownerColor: 'black', initialPos: { x: 6, y: 6 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+            { type: 'Pawn', ownerColor: 'black', initialPos: { x: 7, y: 6 }, stats: { hp: 100, attack: 20, defense: 10, speed: 1, visionRange: 3, reportFrequency: 5 } },
+        ];
+
+        /**
+         * Spawns the initial chess units into the Firestore sub-collection for a given game room.
+         * This function should only be called by the host (player1Id) to avoid duplicate unit creation.
+         * @param {string} roomId The ID of the game room.
+         * @param {string} player1Id The user ID of player 1 (white pieces).
+         * @param {string} player2Id The user ID of player 2 (black pieces).
+         */
+        async function spawnInitialUnits(roomId, player1Id, player2Id) {
+            console.log("Attempting to spawn initial units...");
+            const unitsCollectionRef = collection(db, `artifacts/${appId}/public/data/game_rooms/${roomId}/units`);
+
+            try {
+                for (const piece of initialChessPieces) {
+                    const ownerId = piece.ownerColor === 'white' ? player1Id : player2Id;
+                    if (!ownerId) {
+                        console.warn(`Skipping unit creation for ${piece.ownerColor} as ownerId is missing.`);
+                        continue;
+                    }
+                    await addDoc(unitsCollectionRef, {
+                        type: piece.type,
+                        ownerId: ownerId,
+                        color: piece.ownerColor,
+                        position: piece.initialPos,
+                        stats: piece.stats,
+                        currentHp: piece.stats.hp, // Initialize current HP to max HP
+                        createdAt: new Date(),
+                        // Add any other initial state for units here (e.g., current orders, status)
+                    });
+                }
+                console.log("Initial units spawned successfully for room:", roomId);
+            } catch (error) {
+                console.error("Error spawning initial units:", error);
+                showCustomModal("Failed to spawn game units. Please check console for details.");
+            }
+        }
+
+
         // Function to set up real-time listener for the game room
         function setupGameRoomListener(roomId) {
             if (unsubscribeFromRoom) {
@@ -369,10 +458,7 @@
 
                         // Only the host (player1Id) should spawn units, and only if they haven't been spawned yet
                         if (roomData.player1Id === currentUserId && roomData.player2Id) {
-                            const unitsCollectionCheckRef = collection(db, `artifacts/${appId}/public/data/game_rooms/${roomId}/units`);
-                            const unitsSnapCheck = await getDoc(unitsCollectionCheckRef); // Use getDoc on the collection reference
-                            // This check needs to be more robust. `getDoc` on a collection reference doesn't work directly.
-                            // A better way is to query for documents and check if any exist.
+                            const unitsCollectionRef = collection(db, `artifacts/${appId}/public/data/game_rooms/${roomId}/units`);
                             const unitsQuerySnap = await getDocs(unitsCollectionRef); // Use getDocs for a collection
                             if (unitsQuerySnap.empty) {
                                 await spawnInitialUnits(roomId, roomData.player1Id, roomData.player2Id);
@@ -418,10 +504,11 @@
             const roomCodeInput = document.getElementById('roomCodeInput');
             const roomCodeDisplay = document.getElementById('roomCodeDisplay');
             const generatedRoomCodeSpan = document.getElementById('generatedRoomCode');
-            const userIdDisplay = document.getElementById('userIdDisplay');
+            const userIdDisplay = document.getElementById('userIdDisplay'); // Corrected ID
             const modalCloseBtn = document.getElementById('modalCloseBtn');
             const customModal = document.getElementById('customModal');
             const waitingMessage = document.getElementById('waitingMessage');
+            gameCanvas = document.getElementById('gameCanvas'); // Get canvas element here
 
 
             // Initialize Firebase App and Services
@@ -463,6 +550,63 @@
             // Close modal button event listener
             modalCloseBtn.addEventListener('click', () => {
                 customModal.classList.add('hidden');
+            });
+
+            // Add click listener for the game canvas
+            gameCanvas.addEventListener('click', (event) => {
+                if (!currentUserId || !currentRoomId) {
+                    showCustomModal("Please join or create a game first.");
+                    return;
+                }
+
+                const rect = gameCanvas.getBoundingClientRect();
+                const mouseX = event.clientX - rect.left;
+                const mouseY = event.clientY - rect.top;
+
+                // Calculate grid coordinates
+                const clickedGridX = Math.floor(mouseX / tileSize);
+                const clickedGridY = Math.floor(mouseY / tileSize);
+
+                console.log(`Clicked at grid: (${clickedGridX}, ${clickedGridY})`);
+
+                // Check if a unit is at the clicked position
+                const clickedUnit = currentUnits.find(unit =>
+                    unit.position.x === clickedGridX && unit.position.y === clickedGridY
+                );
+
+                if (clickedUnit) {
+                    if (clickedUnit.ownerId === currentUserId) {
+                        // Select the unit if it belongs to the current player
+                        selectedUnitId = clickedUnit.id;
+                        console.log('Selected unit:', clickedUnit.type, 'ID:', selectedUnitId);
+                        drawUnits(); // Redraw to show highlight
+                    } else {
+                        // If an enemy unit is clicked, and a friendly unit is selected, this might be an attack order
+                        if (selectedUnitId) {
+                            const friendlySelectedUnit = currentUnits.find(unit => unit.id === selectedUnitId);
+                            if (friendlySelectedUnit) {
+                                showCustomModal(`Selected ${friendlySelectedUnit.type} to target enemy ${clickedUnit.type}. (Logic to be implemented)`);
+                                // Future: create attack messenger
+                            }
+                        } else {
+                            showCustomModal("You clicked an enemy unit.");
+                        }
+                        selectedUnitId = null; // Deselect if enemy clicked directly without a friendly unit selected
+                        drawUnits(); // Redraw to remove any previous highlight
+                    }
+                } else {
+                    // No unit clicked, or clicked on an empty tile
+                    if (selectedUnitId) {
+                        // If a unit was selected, this might be a move order
+                        const friendlySelectedUnit = currentUnits.find(unit => unit.id === selectedUnitId);
+                        if (friendlySelectedUnit) {
+                            showCustomModal(`Selected ${friendlySelectedUnit.type} to move to (${clickedGridX}, ${clickedGridY}). (Logic to be implemented)`);
+                            // Future: create move messenger
+                        }
+                    }
+                    selectedUnitId = null; // Deselect
+                    drawUnits(); // Redraw to remove highlight
+                }
             });
 
 
