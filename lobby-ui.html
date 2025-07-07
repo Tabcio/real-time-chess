@@ -122,10 +122,42 @@
             width: auto;
             padding: 0.5rem 1.5rem;
         }
+
+        /* Game Screen Styles */
+        #gameScreen {
+            display: none; /* Hidden by default */
+            flex-direction: column; /* Arrange items vertically */
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            max-width: 900px; /* Max width for the game area */
+            height: 90vh; /* Take most of the viewport height */
+            background-color: #2d3748;
+            border-radius: 1rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            padding: 1rem;
+            box-sizing: border-box;
+        }
+        #gameCanvas {
+            background-color: #1a202c; /* Dark canvas background */
+            border: 2px solid #63b3ed; /* Blue border for canvas */
+            border-radius: 0.5rem;
+            width: 100%; /* Make canvas responsive */
+            height: 100%; /* Make canvas responsive */
+            max-width: 800px; /* Max width for the canvas itself */
+            max-height: 800px; /* Max height for the canvas itself */
+            display: block; /* Remove extra space below canvas */
+        }
+        #gameInfo {
+            color: #cbd5e0;
+            margin-top: 1rem;
+            font-size: 1.1rem;
+        }
     </style>
 </head>
 <body>
-    <div class="container">
+    <!-- Lobby Container -->
+    <div id="lobbyContainer" class="container">
         <h1 class="text-4xl sm:text-5xl font-extrabold mb-8">Real-Time Chess</h1>
 
         <!-- User ID Display -->
@@ -139,6 +171,7 @@
             <button id="createGameBtn" class="mb-4">Create New Game</button>
             <div id="roomCodeDisplay" class="room-code-display hidden">
                 Your Room Code: <span id="generatedRoomCode" class="font-mono"></span>
+                <p id="waitingMessage" class="text-sm text-gray-400 mt-2 hidden">Waiting for opponent...</p>
             </div>
         </div>
 
@@ -150,6 +183,12 @@
             <input type="text" id="roomCodeInput" placeholder="Enter Room Code" class="w-full mb-4">
             <button id="joinGameBtn">Join Game</button>
         </div>
+    </div>
+
+    <!-- Game Screen Container (initially hidden) -->
+    <div id="gameScreen" class="hidden">
+        <h2 id="gameInfo" class="text-2xl font-semibold mb-4">Game Room: <span id="gameRoomCodeDisplay"></span></h2>
+        <canvas id="gameCanvas"></canvas>
     </div>
 
     <!-- Custom Modal for Messages -->
@@ -164,7 +203,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, collection, getDoc, updateDoc, onSnapshot, addDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Global variables provided by the Canvas environment
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -176,6 +215,16 @@
         let db;
         let auth;
         let currentUserId = null;
+        let currentRoomId = null; // Store the ID of the room the user is in
+        let unsubscribeFromRoom = null; // To store the unsubscribe function for the Firestore listener
+        let unsubscribeFromUnits = null; // To store the unsubscribe function for the units listener
+
+        let gameCanvas;
+        let ctx;
+        const boardSize = 8; // 8x8 chess board
+        let tileSize; // Will be calculated based on canvas size
+
+        let currentUnits = []; // Array to hold the latest unit data for rendering
 
         // Function to show custom modal messages
         function showCustomModal(message) {
@@ -194,6 +243,175 @@
             return result;
         }
 
+        // Function to switch views
+        function switchToView(viewId) {
+            const lobbyContainer = document.getElementById('lobbyContainer');
+            const gameScreen = document.getElementById('gameScreen');
+
+            if (viewId === 'lobby') {
+                lobbyContainer.classList.remove('hidden');
+                lobbyContainer.style.display = 'flex'; // Ensure flexbox layout for centering
+                gameScreen.classList.add('hidden');
+                gameScreen.style.display = 'none';
+                if (unsubscribeFromUnits) {
+                    unsubscribeFromUnits(); // Stop listening to units when leaving game screen
+                    unsubscribeFromUnits = null;
+                }
+            } else if (viewId === 'game') {
+                lobbyContainer.classList.add('hidden');
+                lobbyContainer.style.display = 'none';
+                gameScreen.classList.remove('hidden');
+                gameScreen.style.display = 'flex'; // Ensure flexbox layout for centering
+                // Initialize canvas dimensions
+                gameCanvas = document.getElementById('gameCanvas');
+                ctx = gameCanvas.getContext('2d');
+                resizeCanvas(); // Set initial size
+                window.addEventListener('resize', resizeCanvas); // Make it responsive
+            }
+        }
+
+        // Function to resize canvas and recalculate tileSize
+        function resizeCanvas() {
+            // Set canvas display size to fill its container (CSS handles this)
+            // Then set the actual drawing surface size to match the display size
+            const rect = gameCanvas.getBoundingClientRect();
+            gameCanvas.width = rect.width;
+            gameCanvas.height = rect.height;
+
+            // Calculate tile size based on the smaller dimension to fit the board
+            tileSize = Math.min(gameCanvas.width, gameCanvas.height) / boardSize;
+
+            // Redraw units if they exist
+            if (currentUnits.length > 0) {
+                drawUnits();
+            }
+        }
+
+        // Function to draw units on the canvas
+        function drawUnits() {
+            if (!ctx || !gameCanvas) return;
+
+            // Clear the entire canvas
+            ctx.clearRect(0, 0, gameCanvas.width, gameCanvas.height);
+
+            // Draw the chess board background (optional, but good for context)
+            for (let i = 0; i < boardSize; i++) {
+                for (let j = 0; j < boardSize; j++) {
+                    ctx.fillStyle = (i + j) % 2 === 0 ? '#b0c4de' : '#778899'; // Light steel blue and light slate gray
+                    ctx.fillRect(i * tileSize, j * tileSize, tileSize, tileSize);
+                }
+            }
+
+            // Draw each unit
+            currentUnits.forEach(unit => {
+                const x = unit.position.x * tileSize + tileSize / 2; // Center of the tile
+                const y = unit.position.y * tileSize + tileSize / 2; // Center of the tile
+
+                ctx.save(); // Save the current drawing state
+
+                // Determine color based on ownerColor
+                ctx.fillStyle = unit.color === 'white' ? '#f8f8f8' : '#333333'; // Off-white for white, dark grey for black
+                ctx.strokeStyle = unit.color === 'white' ? '#333333' : '#f8f8f8'; // Opposite for stroke
+                ctx.lineWidth = 2;
+
+                // Draw a simple circle for now
+                ctx.beginPath();
+                ctx.arc(x, y, tileSize * 0.4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+
+                // Draw unit type text (e.g., Pawn, Rook) or Unicode chess character
+                ctx.fillStyle = unit.color === 'white' ? '#333333' : '#f8f8f8'; // Text color
+                ctx.font = `${tileSize * 0.4}px Arial`; // Adjust font size based on tile size
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                let pieceChar;
+                // Use Unicode chess characters for better representation
+                switch (unit.type) {
+                    case 'King': pieceChar = unit.color === 'white' ? '♔' : '♚'; break;
+                    case 'Queen': pieceChar = unit.color === 'white' ? '♕' : '♛'; break;
+                    case 'Rook': pieceChar = unit.color === 'white' ? '♖' : '♜'; break;
+                    case 'Bishop': pieceChar = unit.color === 'white' ? '♗' : '♝'; break;
+                    case 'Knight': pieceChar = unit.color === 'white' ? '♘' : '♞'; break;
+                    case 'Pawn': pieceChar = unit.color === 'white' ? '♙' : '♟'; break;
+                    default: pieceChar = '?';
+                }
+                ctx.fillText(pieceChar, x, y);
+
+                ctx.restore(); // Restore the drawing state
+            });
+        }
+
+
+        // Function to set up real-time listener for the game room
+        function setupGameRoomListener(roomId) {
+            if (unsubscribeFromRoom) {
+                unsubscribeFromRoom(); // Unsubscribe from any previous room listener
+            }
+            if (unsubscribeFromUnits) {
+                unsubscribeFromUnits(); // Unsubscribe from any previous units listener
+            }
+
+            const gameRoomRef = doc(collection(db, `artifacts/${appId}/public/data/game_rooms`), roomId);
+
+            unsubscribeFromRoom = onSnapshot(gameRoomRef, async (docSnap) => {
+                if (docSnap.exists()) {
+                    const roomData = docSnap.data();
+                    console.log("Game Room Data Updated:", roomData);
+
+                    // Update the game room code display on the game screen
+                    document.getElementById('gameRoomCodeDisplay').textContent = roomId;
+
+                    if (roomData.status === 'active') {
+                        showCustomModal("Game is starting!");
+                        switchToView('game');
+
+                        // Only the host (player1Id) should spawn units, and only if they haven't been spawned yet
+                        if (roomData.player1Id === currentUserId && roomData.player2Id) {
+                            const unitsCollectionCheckRef = collection(db, `artifacts/${appId}/public/data/game_rooms/${roomId}/units`);
+                            const unitsSnapCheck = await getDoc(unitsCollectionCheckRef); // Use getDoc on the collection reference
+                            // This check needs to be more robust. `getDoc` on a collection reference doesn't work directly.
+                            // A better way is to query for documents and check if any exist.
+                            const unitsQuerySnap = await getDocs(unitsCollectionRef); // Use getDocs for a collection
+                            if (unitsQuerySnap.empty) {
+                                await spawnInitialUnits(roomId, roomData.player1Id, roomData.player2Id);
+                            } else {
+                                console.log("Units already exist for this room, skipping spawn.");
+                            }
+                        }
+
+                        // Set up listener for units sub-collection once game is active
+                        const unitsCollectionRef = collection(db, `artifacts/${appId}/public/data/game_rooms/${roomId}/units`);
+                        unsubscribeFromUnits = onSnapshot(unitsCollectionRef, (unitsSnap) => {
+                            currentUnits = unitsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                            console.log("Units data updated:", currentUnits);
+                            drawUnits(); // Redraw units whenever data changes
+                        }, (error) => {
+                            console.error("Error listening to units sub-collection:", error);
+                            showCustomModal("Error in unit updates. Game might not display correctly.");
+                        });
+
+                    } else if (roomData.status === 'waiting' && roomData.player1Id === currentUserId) {
+                        // If current user is player1 and waiting, show waiting message
+                        document.getElementById('waitingMessage').classList.remove('hidden');
+                    } else if (roomData.status === 'finished') {
+                        showCustomModal("Game has ended!");
+                        switchToView('lobby'); // Or a game over screen
+                    }
+                } else {
+                    console.log("Game room no longer exists.");
+                    showCustomModal("The game room you were in no longer exists.");
+                    switchToView('lobby');
+                }
+            }, (error) => {
+                console.error("Error listening to game room:", error);
+                showCustomModal("Error in game room updates. Returning to lobby.");
+                switchToView('lobby');
+            });
+        }
+
+
         document.addEventListener('DOMContentLoaded', async () => {
             const createGameBtn = document.getElementById('createGameBtn');
             const joinGameBtn = document.getElementById('joinGameBtn');
@@ -203,6 +421,8 @@
             const userIdDisplay = document.getElementById('userIdDisplay');
             const modalCloseBtn = document.getElementById('modalCloseBtn');
             const customModal = document.getElementById('customModal');
+            const waitingMessage = document.getElementById('waitingMessage');
+
 
             // Initialize Firebase App and Services
             try {
@@ -226,6 +446,7 @@
                         currentUserId = user.uid;
                         userIdDisplay.textContent = currentUserId;
                         console.log("User ID:", currentUserId);
+                        // Potentially check if user is already in a game and re-join
                     } else {
                         currentUserId = null;
                         userIdDisplay.textContent = 'Not signed in';
@@ -265,10 +486,14 @@
                         // Add other initial game state properties here later
                     });
 
+                    currentRoomId = roomCode; // Store the created room ID
                     generatedRoomCodeSpan.textContent = roomCode;
                     roomCodeDisplay.classList.remove('hidden');
+                    waitingMessage.classList.remove('hidden'); // Show waiting message
                     console.log('Game created with code:', roomCode);
                     showCustomModal(`Game created! Share this code: ${roomCode}`);
+
+                    setupGameRoomListener(roomCode); // Start listening to the created room
 
                 } catch (error) {
                     console.error("Error creating game room:", error);
@@ -276,18 +501,65 @@
                 }
             });
 
-            // Placeholder for actual game joining logic
-            joinGameBtn.addEventListener('click', () => {
+            // Handle Join Game button click
+            joinGameBtn.addEventListener('click', async () => {
                 if (!currentUserId) {
                     showCustomModal("Please wait, user authentication is not ready yet.");
                     return;
                 }
+
                 const enteredCode = roomCodeInput.value.trim();
-                if (enteredCode) {
-                    console.log('Join Game clicked. Entered code:', enteredCode);
-                    // In a later step, this will check Firebase for the room
-                } else {
+                if (!enteredCode) {
                     showCustomModal('Please enter a room code to join.');
+                    return;
+                }
+
+                showCustomModal("Joining game..."); // Show loading message
+
+                try {
+                    const gameRoomRef = doc(collection(db, `artifacts/${appId}/public/data/game_rooms`), enteredCode);
+                    const gameRoomSnap = await getDoc(gameRoomRef);
+
+                    if (!gameRoomSnap.exists()) {
+                        showCustomModal('Room not found. Please check the code.');
+                        console.log('Room not found:', enteredCode);
+                        return;
+                    }
+
+                    const roomData = gameRoomSnap.data();
+
+                    if (roomData.status === 'active') {
+                        showCustomModal('This room is already full or active.');
+                        console.log('Room is already active:', enteredCode);
+                        return;
+                    }
+
+                    // If the room is waiting and the current user is not player1, they can join as player2
+                    if (roomData.status === 'waiting' && roomData.player1Id !== currentUserId) {
+                        await updateDoc(gameRoomRef, {
+                            player2Id: currentUserId,
+                            status: 'active',
+                            joinedAt: new Date(),
+                        });
+                        currentRoomId = enteredCode; // Store the joined room ID
+                        console.log('Joined game with code:', enteredCode);
+                        showCustomModal(`Successfully joined room: ${enteredCode}`);
+                        setupGameRoomListener(enteredCode); // Start listening to the joined room
+                    } else if (roomData.player1Id === currentUserId) {
+                        showCustomModal('You are already the host of this room. Waiting for an opponent.');
+                        console.log('User is already host of this room, waiting for opponent:', enteredCode);
+                        currentRoomId = enteredCode; // Ensure currentRoomId is set if they are the host
+                        setupGameRoomListener(enteredCode); // Start listening even if already host
+                    } else {
+                         // This case handles if status is not 'waiting' or 'active' (e.g., 'finished')
+                         showCustomModal('This room is not available for joining.');
+                         console.log('Room not available for joining:', enteredCode, roomData.status);
+                    }
+
+
+                } catch (error) {
+                    console.error("Error joining game room:", error);
+                    showCustomModal("Failed to join game. Please try again.");
                 }
             });
         });
